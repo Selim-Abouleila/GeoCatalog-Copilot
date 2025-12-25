@@ -1,3 +1,7 @@
 arcgis
 requests
 python-dotenv
+streamlit
+folium
+streamlit-folium
+beautifulsoup4
