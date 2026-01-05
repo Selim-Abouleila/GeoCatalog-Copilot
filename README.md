@@ -81,3 +81,24 @@ To verify that reports are generated correctly:
 ```bash
 python scripts/verify_step3.py
 ```
+
+## Feature Layer Tools (Step 5)
+
+Data scientists can now inspect layers directly from the Copilot chat.
+
+### Capabilities
+- **Row Counts**: accurate counts for layers and tables.
+- **Map Preview**: visualize a subset of features on the map.
+
+
+### How to use
+In the Copilot chat, type:
+- "count rows for [Item ID or URL]"
+- "visualize [Item ID or URL]"
+
+**Or click the "👁️ Visualize" button directly on any Feature Layer result card.**
+
+### Verification
+```bash
+python scripts/verify_visualize_geojson.py --item-id <id>
+```

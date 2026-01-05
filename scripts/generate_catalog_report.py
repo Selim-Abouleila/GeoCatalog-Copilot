@@ -2,24 +2,24 @@ import sys
 import os
 import argparse
 import pandas as pd
-from datetime import datetime, timezone
-import pathlib
+from datetime import datetime
 import duckdb
 
 # Ensure project root is in path
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-from src.storage.duckdb_client import connect, get_db_path
+from src.storage.duckdb_client import connect
+# Note: we import preflight logic here, but for module use we might skip it or handle differently.
+# But keeping consistent behavior is good.
 
-def preflight_or_exit(con):
+def preflight_or_exit(con, exit_on_error=True):
     """
     Verifies that the database is healthy and has the required schema.
-    Exits with error if tables or columns are missing.
-    Returns latest run info if successful, else exits 0 if no runs found.
+    Returns latest run info if successful.
+    If exit_on_error is True, exits process on failure.
+    Else raises Exception.
     """
     print("Performing preflight checks...")
-    
-    # 1. Check Connection (Implicit by being passed 'con')
     
     # 2. Check Tables
     required_tables = ['runs', 'items_current', 'quality_scores', 'health_checks', 'items_history']
@@ -28,10 +28,13 @@ def preflight_or_exit(con):
     
     missing_tables = [t for t in required_tables if t not in existing_tables]
     if missing_tables:
-        print(f"[ERROR] Missing tables: {missing_tables}")
-        print("Run 'python scripts/init_duckdb.py' and 'python scripts/run_snapshot.py'.")
-        sys.exit(1)
-        
+        msg = f"Missing tables: {missing_tables}. Run 'python scripts/init_duckdb.py' and 'python scripts/run_snapshot.py'."
+        if exit_on_error:
+            print(f"[ERROR] {msg}")
+            sys.exit(1)
+        else:
+            raise RuntimeError(msg)
+            
     # 3. Check Columns (Sampling key columns)
     required_cols = {
         'runs': ['run_id', 'started_at', 'finished_at'],
@@ -46,17 +49,23 @@ def preflight_or_exit(con):
         existing_cols = set(table_info_df['name'].tolist())
         missing_cols = [c for c in cols if c not in existing_cols]
         if missing_cols:
-            # Flexible check for items_history 'first_seen_run_id' as it might be 'valid_from' focused logic in older schema versions
-            # But per user spec, we must check it. 
-            print(f"[ERROR] Table '{table}' missing columns: {missing_cols}")
-            sys.exit(1)
+            msg = f"Table '{table}' missing columns: {missing_cols}"
+            if exit_on_error:
+                print(f"[ERROR] {msg}")
+                sys.exit(1)
+            else:
+                raise RuntimeError(msg)
             
     # 4. Detect Latest Run
     runs_df = con.sql("SELECT run_id, started_at, finished_at FROM runs ORDER BY started_at DESC LIMIT 1").df()
     
     if runs_df.empty:
-        print("No runs found. Run 'python scripts/run_snapshot.py' first.")
-        sys.exit(0)
+        msg = "No runs found. Run 'python scripts/run_snapshot.py' first."
+        if exit_on_error:
+            print(msg)
+            sys.exit(0)
+        else:
+            return None # Indicate no runs
         
     print("[OK] Preflight checks passed.")
     return runs_df.iloc[0].to_dict()
@@ -79,24 +88,24 @@ def query_df(con, sql, params=None):
 def render_df_markdown(df, limit=50):
     if df.empty:
         return "_No rows found._"
-    
-    # Truncate for markdown display
     display_df = df.head(limit).copy()
-    return display_df.to_markdown(index=False)
+    try:
+        return display_df.to_markdown(index=False)
+    except ImportError:
+        return str(display_df)
 
-def generate_report(con, run_id_str, output_dir, verify_only=False):
+def generate_report_logic(con, run_id_str, output_dir, verify_only=False):
     # Setup
     if not os.path.exists(output_dir) and not verify_only:
         os.makedirs(output_dir)
         
     run_info = get_run(con, run_id_str)
     if not run_info:
-        print(f"[ERROR] Run ID {run_id_str} not found.")
-        sys.exit(1)
+        raise ValueError(f"Run ID {run_id_str} not found.")
         
     run_short = str(run_id_str)[:8]
     date_str = pd.to_datetime(run_info['started_at']).strftime('%Y-%m-%d')
-    output_base = f"{output_dir}/catalog_health_{date_str}_{run_short}"
+    output_base = os.path.join(output_dir, f"catalog_health_{date_str}_{run_short}")
     md_path = f"{output_base}.md"
     
     print(f"Generating report for Run {run_short} ({date_str})...")
@@ -151,6 +160,8 @@ def generate_report(con, run_id_str, output_dir, verify_only=False):
     
     report_sections.append("## Top Issues")
     
+    csv_paths = []
+    
     for name, sql in issues_map.items():
         print(f" - Running check: {name}")
         df = query_df(con, sql)
@@ -163,6 +174,7 @@ def generate_report(con, run_id_str, output_dir, verify_only=False):
         if not verify_only:
             csv_path = f"{output_base}_{name}.csv"
             df.to_csv(csv_path, index=False, encoding='utf-8')
+            csv_paths.append(csv_path)
             print(f"   -> Wrote {csv_path} ({len(df)} rows)")
 
     # D) By-Owner Aggregations
@@ -185,36 +197,20 @@ def generate_report(con, run_id_str, output_dir, verify_only=False):
     if not verify_only:
         owner_csv = f"{output_base}_owner_summary.csv"
         owner_df.to_csv(owner_csv, index=False, encoding='utf-8')
+        csv_paths.append(owner_csv)
         print(f"   -> Wrote {owner_csv} ({len(owner_df)} rows)")
 
-    # E) History / Changes
-    # Find header for history
-    # For now, simple logic: Find prev run.
-    prev_run_df = con.sql(f"SELECT run_id FROM runs WHERE start_time < (SELECT started_at FROM runs WHERE run_id='{run_id_str}') ORDER BY started_at DESC LIMIT 1").df() \
-                  if 'start_time' in con.sql("PRAGMA table_info('runs')").df()['name'].tolist() else \
-                  con.sql(f"SELECT run_id FROM runs WHERE started_at < (SELECT started_at FROM runs WHERE run_id='{run_id_str}') ORDER BY started_at DESC LIMIT 1").df()
-
+    # E) Changes Since Previous Run
+    # Simplified logic to find previous run
     report_sections.append("## Changes Since Previous Run")
+    
+    # Try different table checks for backward compatibility if needed, but here we assume 'started_at'
+    # The check below is a bit verbose, we'll simpler logic for this refactor.
+    prev_run_df = con.sql(f"SELECT run_id FROM runs WHERE started_at < (SELECT started_at FROM runs WHERE run_id='{run_id_str}') ORDER BY started_at DESC LIMIT 1").df()
     
     if prev_run_df.empty:
         report_sections.append("_No previous run to compare._")
     else:
-        # Changed Items (Logic: First seen in this run, but items_history has older entries?)
-        # Or simpler: Just list items where first_seen_run_id == this_run_id
-        # This covers NEW items and UPDATED items (because SCD2 logic inserts new version with first_seen_run_id=this_run? 
-        # Wait, usually first_seen_run_id tracks when the ITEM ID was first seen. 
-        # If we updated items_history logic correctly, a new version of an existing item would keep original first_seen_run_id?
-        # Let's check schema. items_history has first_seen_run_id.
-        # If I change an item, I insert a new history row. 
-        # In snapshot.py:
-        # INSERT INTO items_history (..., first_seen_run_id, ...) SELECT ..., ? as first_seen_run_id 
-        # FROM stg_items LEFT JOIN items_history ... WHERE h.item_id IS NULL
-        # This implies first_seen_run_id is set to CURRENT run for new rows.
-        # So "first_seen_run_id = current_run" means "This version was created in this run".
-        # To distinguish NEW item vs CHANGED item:
-        # NEW item: all history rows for this item_id have first_seen_run_id = current_run (only 1 row usually, or multiple if crazy churn)
-        # CHANGED item: there exist other history rows for this item_id with first_seen_run_id != current_run.
-        
         changes_sql = f"""
         SELECT 
             h.item_id, h.title, h.owner, h.item_type,
@@ -235,10 +231,37 @@ def generate_report(con, run_id_str, output_dir, verify_only=False):
         with open(md_path, 'w', encoding='utf-8') as f:
             f.write("\n\n".join(report_sections))
         print(f"Report generated: {md_path}")
+        return {"ok": True, "md_path": md_path, "csv_paths": csv_paths, "run_id": run_id_str}
     else:
         print("[OK] Verification mode: Report generation logic passed.")
+        return {"ok": True, "verified": True}
 
+# --- Module Function for Streamlit ---
+def generate_catalog_report(run_id: str = None, out_dir: str = "reports") -> dict:
+    """
+    Generates the catalog report programmatically.
+    Returns dict like {"ok": True, "md_path": "...", ...} or {"ok": False, "error": "..."}.
+    """
+    try:
+        con = connect(read_only=True)
+        try:
+            # Preflight (no exit)
+            latest_run_info = preflight_or_exit(con, exit_on_error=False)
+            
+            if not latest_run_info:
+                return {"ok": False, "error": "No runs found in database."}
+            
+            target_id = run_id if run_id else str(latest_run_info['run_id'])
+            
+            result = generate_report_logic(con, target_id, out_dir, verify_only=False)
+            return result
+            
+        finally:
+            con.close()
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
 
+# --- CLI Entry Point ---
 def main():
     parser = argparse.ArgumentParser(description="Generate Catalog Health Report")
     parser.add_argument("--run-id", help="Run ID to report on (defaults to latest)")
@@ -248,14 +271,14 @@ def main():
     
     con = connect(read_only=True)
     try:
-        # Preflight
-        latest_run = preflight_or_exit(con)
+        # Preflight (exit on error)
+        latest_run = preflight_or_exit(con, exit_on_error=True)
         
         # Determine Run ID
         target_run_id = args.run_id if args.run_id else str(latest_run['run_id'])
         
         # Generate
-        generate_report(con, target_run_id, args.out_dir, verify_only=args.verify)
+        generate_report_logic(con, target_run_id, args.out_dir, verify_only=args.verify)
         
     finally:
         con.close()
