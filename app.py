@@ -21,8 +21,8 @@ from src.services.arcgis_client import get_gis
 
 # Feature Layer Tools integration
 from src.tools.feature_layer_tools import resolve_item, get_row_counts, query_preview_geojson
-from src.ui.map_overlays import add_geojson_overlay
-from src.ui.map_state import init_map_state, enter_layer_view, exit_layer_view, add_preview_layer, remove_preview_layer, set_pending_zoom, consume_pending_zoom
+from src.ui.map_state import init_map_state, enter_layer_view, exit_layer_view, add_preview_layer, remove_preview_layer, set_pending_zoom, clear_preview_layers
+from src.ui.map_renderer import app_render_map
 
 # Load environment variables
 load_dotenv()
@@ -105,12 +105,19 @@ with st.sidebar:
             
             st.markdown("active layers:")
             for idx, lyr in enumerate(st.session_state.preview_layers):
-                c1, c2 = st.columns([3, 1])
+                c1, c2, c3 = st.columns([3, 1, 1])
                 c1.caption(f"{idx+1}. {lyr['name']}")
+                
+                # Zoom Button
                 if lyr.get('extent'):
-                    if c2.button("🔭", key=f"zoom_{idx}", help="Zoom to layer"):
+                    if c2.button("🔭", key=f"zoom_{lyr.get('key', idx)}", help="Zoom to layer"):
                         set_pending_zoom(st.session_state, lyr['extent'])
                         st.rerun()
+                
+                # Remove Button
+                if c3.button("✖", key=f"rem_{lyr.get('key', idx)}", help="Remove layer"):
+                    remove_preview_layer(st.session_state, lyr.get('key'))
+                    st.rerun()
             st.divider()
 
         st.markdown("**Settings**")
@@ -126,7 +133,7 @@ with st.sidebar:
         
         if st.session_state.map_mode == "browse":
             if st.button("Clear Map"):
-                st.session_state.preview_layers = []
+                clear_preview_layers(st.session_state)
                 st.rerun()
 
         st.markdown("**View**")
@@ -261,34 +268,7 @@ if page == "Copilot":
     with col_map:
         st.markdown("##### 🗺️ Map")
         with st.container(height=600):
-            
-            # Check Pending Zoom
-            zoom_ext = consume_pending_zoom(st.session_state)
-            
-            # Initialize Folium
-            curr_loc = st.session_state.map_center
-            curr_zoom = st.session_state.map_zoom
-            
-            m = folium.Map(location=curr_loc, zoom_start=curr_zoom)
-            
-            # Apply Zoom if pending
-            if zoom_ext:
-                # [xmin, ymin, xmax, ymax] -> [[ymin, xmin], [ymax, xmax]]
-                m.fit_bounds([[zoom_ext[1], zoom_ext[0]], [zoom_ext[3], zoom_ext[2]]])
-            
-            # Focused Location Marker (Only if not layer view or browsing)
-            if st.session_state.map_center != [20, 0] and st.session_state.map_mode == "browse":
-                 folium.Marker(st.session_state.map_center, icon=folium.Icon(color="red", icon="map-marker")).add_to(m)
-            
-            # Preview Layers
-            for plyr in st.session_state.preview_layers:
-                add_geojson_overlay(m, plyr['geojson'], plyr['name'], plyr.get('geometry_type', 'Unknown'))
-                
-            # Layer Control (Once)
-            if st.session_state.preview_layers:
-                folium.LayerControl().add_to(m)
-                
-            st_folium(m, width="100%", height=550)
+            app_render_map(st.session_state)
 
     if debug_mode:
         st.divider()
