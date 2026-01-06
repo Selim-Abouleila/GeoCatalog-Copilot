@@ -15,13 +15,15 @@ def main():
     parser.add_argument("--limit", type=int, default=50)
     args = parser.parse_args()
     
-    print(f"Testing visualization for Item: {args.item_id}, Layer: {args.layer_index}")
+    print(f"Testing visualization for Input: {args.item_id}, Layer: {args.layer_index}")
     
+    # query_preview_geojson now handles URLs natively
     result = query_preview_geojson(args.item_id, args.layer_index, limit=args.limit)
     
     print(f"OK: {result['ok']}")
     if result.get('error'):
         print(f"Error: {result['error']}")
+        sys.exit(1) # Fail fast
         
     print(f"Layer Name: {result.get('layer_name')}")
     print(f"Geometry Type: {result.get('geometry_type')}")
@@ -42,6 +44,23 @@ def main():
     count = len(features)
     print(f"Feature Count: {count}")
     print(f"Computed Extent: {result.get('extent')}")
+    
+    # Check Coordinates for sanity (Lon/Lat)
+    if count > 0:
+        def get_pt(c):
+            if isinstance(c[0], (int, float)): return c
+            return get_pt(c[0])
+            
+        try:
+            pt = get_pt(features[0]['geometry']['coordinates'])
+            print(f"Sample Coordinate: {pt}")
+            if abs(pt[0]) > 185 or abs(pt[1]) > 95:
+                print("[FAIL] Coordinates look projected (not Lat/Lon)!")
+                sys.exit(1)
+            else:
+                print("[PASS] Coordinates look like Lat/Lon.")
+        except:
+            print("[WARN] Could not parse geometry for check.")
     
     if result['ok'] and count >= 0:
         print("[SUCCESS] GeoJSON generated correctly.")

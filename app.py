@@ -20,7 +20,7 @@ from scripts.generate_catalog_report import generate_catalog_report
 from src.services.arcgis_client import get_gis
 
 # Feature Layer Tools integration
-from src.tools.feature_layer_tools import resolve_item, get_row_counts, query_preview_geojson, query_preview_features
+from src.tools.feature_layer_tools import resolve_item, get_row_counts, query_preview_geojson
 from src.ui.map_overlays import add_geojson_overlay
 from src.ui.map_state import init_map_state, enter_layer_view, exit_layer_view, add_preview_layer, remove_preview_layer, set_pending_zoom, consume_pending_zoom
 
@@ -53,6 +53,18 @@ init_map_state(st.session_state)
 
 # --- Helper Logic ---
 def get_item_id_from_text(text):
+    # 1. Check for Map Viewer URL
+    if "apps/mapviewer" in text and "url=" in text:
+        return text.strip()
+    
+    # 2. Check for FeatureServer/MapServer URL
+    if "/FeatureServer" in text or "/MapServer" in text:
+        match = re.search(r'(https?://\S+/(?:FeatureServer|MapServer)(?:/\d+)?)', text)
+        if match: return match.group(1)
+        # If regex fails but keyword exists, might be simple string
+        return text.strip()
+
+    # 3. Item ID
     match = re.search(r'\b[0-9a-f]{32}\b', text)
     if match: return match.group(0)
     match_url = re.search(r'id=([0-9a-f]{32})', text)
