@@ -46,15 +46,17 @@ def get_map_signature(state):
     Creates a hashable signature for the current map state.
     Used to determine if we need to rebuild the map HTML.
     """
-    # Key components: Center, Zoom (initial), Overlays (keys), Pending Zoom
+    # Key components: Center, Zoom (initial), Overlays (keys), Pending Zoom, Preview Version
     overlay_keys = tuple(l.get('key', 'unk') for l in state.get("preview_layers", []))
     pending_zoom = tuple(state.get("pending_zoom_extent") or [])
+    preview_version = state.get("preview_layers_version", 0)
     
     return (
         tuple(state.get("map_center", [20, 0])),
         state.get("map_zoom", 2),
         overlay_keys,
-        pending_zoom
+        pending_zoom,
+        preview_version
     )
 
 def render_map_static(m: folium.Map, height: int = 550):

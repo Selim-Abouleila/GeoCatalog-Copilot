@@ -23,6 +23,7 @@ from src.services.arcgis_client import get_gis
 from src.tools.feature_layer_tools import resolve_item, get_row_counts, query_preview_geojson
 from src.ui.map_state import init_map_state, enter_layer_view, exit_layer_view, add_preview_layer, remove_preview_layer, set_pending_zoom, clear_preview_layers
 from src.ui.map_renderer import app_render_map
+from src.ui.preview_refresh import refresh_preview_layers
 
 # Load environment variables
 load_dotenv()
@@ -47,6 +48,10 @@ if "selected_item_id" not in st.session_state:
     st.session_state.selected_item_id = None
 if "first_load" not in st.session_state:
     st.session_state.first_load = True
+if "preview_limit_applied" not in st.session_state:
+    st.session_state.preview_limit_applied = 300
+if "preview_layers_version" not in st.session_state:
+    st.session_state.preview_layers_version = 0
 
 # Initialize Map State (using helper)
 init_map_state(st.session_state)
@@ -126,8 +131,20 @@ with st.sidebar:
         item_type = st.selectbox("Item Type", ["Feature Layer", "Map Image Layer", "Web Map", "Scene Layer", "Image Service"])
         
         st.markdown("**Preview Settings**")
-        preview_limit = st.slider("Max Preview Size", 50, 1000, 300)
-        # REMOVED Layer Index Input as requested
+        preview_limit_draft = st.slider("Max Preview Size", 50, 1000, st.session_state.preview_limit_applied)
+        
+        # Apply Button Logic
+        if preview_limit_draft != st.session_state.preview_limit_applied:
+            if st.button(f"Apply ({preview_limit_draft})"):
+                with st.spinner("Refreshing layers..."):
+                    st.session_state.preview_layers = refresh_preview_layers(
+                        st.session_state.preview_layers, 
+                        preview_limit_draft
+                    )
+                    st.session_state.preview_limit_applied = preview_limit_draft
+                    st.session_state.preview_layers_version += 1
+                    st.rerun()
+        
         # layer_idx_sel = st.number_input("Layer Index", 0, 100, 0)
         layer_idx_sel = 0 # Forced default
         
@@ -169,9 +186,11 @@ if page == "Copilot":
             if not st.session_state.messages and st.session_state.first_load:
                 st.session_state.first_load = False
             
-            if not st.session_state.messages:
-                st.caption("Try: 'count rows for <url>' or 'visualize wildfire data'")
-                
+            if not st.session_state.messages and st.session_state.first_load:
+                 st.session_state.first_load = False
+            
+            # Removed startup hint
+            
             for msg in st.session_state.messages:
                 with st.chat_message(msg["role"]): st.markdown(msg["content"])
 
@@ -203,7 +222,7 @@ if page == "Copilot":
                                 else: response_text = "Error counting."
                             if is_viz:
                                 box.write("🗺️ Loading preview...")
-                                handle_visualize(tid, layer_idx_sel, preview_limit)
+                                handle_visualize(tid, layer_idx_sel, st.session_state.preview_limit_applied)
                                 response_text = f"Added **{item.title}** to map."
                             box.update(state="complete")
                         except Exception as e:
@@ -255,7 +274,7 @@ if page == "Copilot":
                             if item['type'] in ['Feature Service', 'Feature Layer', 'Map Service']:
                                 if st.button("👁️ Visualize", key=f"viz_{item['id']}"):
                                     st.session_state.selected_item_id = item['id']
-                                    handle_visualize(item['id'], layer_idx_sel, preview_limit)
+                                    handle_visualize(item['id'], layer_idx_sel, st.session_state.preview_limit_applied)
                                     st.rerun()
                         
                         with st.expander("Details"):
