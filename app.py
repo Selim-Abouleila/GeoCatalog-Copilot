@@ -24,6 +24,7 @@ from src.tools.feature_layer_tools import resolve_item, get_row_counts, query_pr
 from src.ui.map_state import init_map_state, enter_layer_view, exit_layer_view, add_preview_layer, remove_preview_layer, set_pending_zoom, clear_preview_layers
 from src.ui.map_renderer import app_render_map
 from src.ui.preview_refresh import refresh_preview_layers
+from src.ui.results_cards import render_result_card
 
 # Load environment variables
 load_dotenv()
@@ -249,37 +250,25 @@ if page == "Copilot":
         st.markdown(f"##### 📋 Results ({len(st.session_state.results)})")
         with st.container(height=600):
             if st.session_state.results:
-                for item in st.session_state.results:
-                    score = item['quality_score']
-                    bclass = "score-badge-high" if score > 70 else "score-badge-med"
-                    is_sel = st.session_state.selected_item_id == item['id']
+                
+                # Define callbacks
+                def on_viz(tid):
+                    # Visualize does NOT set selected_item_id anymore
+                    handle_visualize(tid, layer_idx_sel, st.session_state.preview_limit_applied)
+                    st.rerun()
                     
-                    with st.container(border=True):
-                        if is_sel: st.info(f"Selected: {item['title']}")
-                        else: st.markdown(f"**[{item['title']}]({item['url']})**")
-                        
-                        st.caption(f"{item['type']} • {item['owner']}")
-                        c1, c2 = st.columns([1,3])
-                        c1.markdown(f"<span class='{bclass}'>{score}</span>", unsafe_allow_html=True)
-                        c2.progress(score/100)
-                        
-                        # Buttons
-                        b1, b2 = st.columns(2)
-                        with b1:
-                            if st.button("Use Item", key=f"sel_{item['id']}"):
-                                st.session_state.selected_item_id = item['id']
-                                st.rerun()
-                        with b2:
-                            # Visualize Button
-                            if item['type'] in ['Feature Service', 'Feature Layer', 'Map Service']:
-                                if st.button("👁️ Visualize", key=f"viz_{item['id']}"):
-                                    st.session_state.selected_item_id = item['id']
-                                    handle_visualize(item['id'], layer_idx_sel, st.session_state.preview_limit_applied)
-                                    st.rerun()
-                        
-                        with st.expander("Details"):
-                            st.write(clean_html_to_text(item.get('snippet')))
-                            st.text_input("ID", value=item['id'], key=f"id_{item['id']}", disabled=True)
+                def on_sel(tid):
+                    st.session_state.selected_item_id = tid
+                    st.rerun()
+
+                for item in st.session_state.results:
+                    render_result_card(
+                        item, 
+                        st.session_state.selected_item_id,
+                        st.session_state.preview_limit_applied,
+                        on_viz,
+                        on_sel
+                    )
             else:
                  st.write("No results.")
 
