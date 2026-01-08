@@ -19,13 +19,24 @@ def build_folium_map(base_center, base_zoom, overlays, pending_zoom_extent, show
     """
     m = folium.Map(location=base_center, zoom_start=base_zoom)
     
+    # Inject CSS to remove Leaflet focus outline
+    focus_css = """
+    <style>
+    .leaflet-interactive { outline: none !important; }
+    .leaflet-interactive:focus { outline: none !important; }
+    .leaflet-container path { outline: none !important; }
+    .leaflet-container path:focus { outline: none !important; }
+    </style>
+    """
+    m.get_root().header.add_child(folium.Element(focus_css))
+    
     # Optional Browse Marker
     if show_browse_marker and base_center != [20, 0]:
         folium.Marker(base_center, icon=folium.Icon(color="red", icon="map-marker")).add_to(m)
     
     # 1. Add Overlays
     for lyr in overlays:
-        add_geojson_overlay(m, lyr.get('geojson'), lyr.get('name'), lyr.get('geometry_type', 'Unknown'))
+        add_geojson_overlay(m, lyr.get('geojson'), lyr.get('name'), lyr.get('geometry_type', 'Unknown'), renderer=lyr.get('renderer'))
         
     # 2. Apply Pending Zoom
     if pending_zoom_extent:

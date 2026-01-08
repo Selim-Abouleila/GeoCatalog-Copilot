@@ -1,15 +1,17 @@
 import folium
 import streamlit as st
 
-def add_geojson_overlay(m: folium.Map, geojson_data: dict, layer_name: str, geometry_type: str = "Unknown"):
+from src.ui.symbology import build_style_function
+
+def add_geojson_overlay(m: folium.Map, geojson_data: dict, layer_name: str, geometry_type: str = "Unknown", renderer: dict = None):
     """
     Adds a persistent GeoJSON overlay to the map using FeatureGroup.
     """
     if not geojson_data or not geojson_data.get('features'):
         return
 
-    # Dynamic Style Function
-    def style_fn(feature):
+    # Default Style Function
+    def default_style_fn(feature):
         gtype = feature['geometry']['type'] if feature.get('geometry') else geometry_type
         
         # Polygons
@@ -35,6 +37,13 @@ def add_geojson_overlay(m: folium.Map, geojson_data: dict, layer_name: str, geom
             'weight': 1,
             'fillOpacity': 0.8
         }
+
+    # Decide Style Function
+    if renderer:
+        # Pass a representative default style (e.g. for points) just in case
+        style_fn = build_style_function(renderer, default_style_fn({'geometry': {'type': geometry_type}}))
+    else:
+        style_fn = default_style_fn
 
     # Tooltip fields (try to guess useful ones)
     fields = []

@@ -21,6 +21,7 @@ from src.services.arcgis_client import get_gis
 
 # Feature Layer Tools integration
 from src.tools.feature_layer_tools import resolve_item, get_row_counts, query_preview_geojson
+from src.tools.renderer_tools import fetch_layer_renderer
 from src.ui.map_state import init_map_state, enter_layer_view, exit_layer_view, add_preview_layer, remove_preview_layer, set_pending_zoom, clear_preview_layers
 from src.ui.map_renderer import app_render_map
 from src.ui.preview_refresh import refresh_preview_layers
@@ -82,13 +83,17 @@ def handle_visualize(item_id, layer_idx, limit):
         res = query_preview_geojson(item_id, layer_index=layer_idx, limit=limit)
         
     if res['ok']:
+        # Fetch Renderer (Symbology)
+        renderer = fetch_layer_renderer(item_id, layer_index=layer_idx)
+        
         add_preview_layer(st.session_state, {
             "item_id": item_id,
             "layer_index": layer_idx,
             "name": res['layer_name'],
             "geometry_type": res['geometry_type'],
             "geojson": res['geojson'],
-            "extent": res.get('extent')
+            "extent": res.get('extent'),
+            "renderer": renderer
         })
         st.toast(f"✅ Loaded: {res['layer_name']}")
     else:
