@@ -7,7 +7,7 @@ import json
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from src.services.arcgis_client import get_gis
-from src.tools.feature_layer_tools import resolve_item, get_row_counts, query_preview_features
+from src.tools.feature_layer_tools import resolve_item, get_row_counts, query_preview_geojson
 
 def main():
     parser = argparse.ArgumentParser(description="Verify Feature Layer Tools")
@@ -40,19 +40,21 @@ def main():
     print(f"\nQuerying preview (limit={args.limit})...")
     try:
         # Try layer 0
-        preview = query_preview_features(item, layer_index=0, limit=args.limit)
-        print(f"[OK] Got {preview['feature_count']} features")
-        print(f"GeoJSON Type: {preview['geojson'].get('type')}")
+        preview = query_preview_geojson(item, layer_index=0, limit=args.limit)
+        
+        if not preview['ok']:
+             print(f"[ERROR] Preview failed: {preview.get('error')}")
+             sys.exit(1)
+             
         feat_len = len(preview['geojson'].get('features', []))
-        print(f"GeoJSON Features: {feat_len}")
+        print(f"[OK] Got {feat_len} features")
+        print(f"GeoJSON Type: {preview['geojson'].get('type')}")
         
         if feat_len == 0 and counts['total_count'] > 0:
             print("[WARN] Preview returned 0 features but count > 0. Extent issue?")
             
     except Exception as e:
         print(f"[ERROR] Preview query failed: {e}")
-        # Not exiting 1 if it's just empty, but if it crashed. 
-        # Feature Services might be empty.
         sys.exit(1)
         
     print("\n[OK] all verifications passed.")

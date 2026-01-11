@@ -84,7 +84,14 @@ def resolve_item(item_id_or_url: str, gis: GIS) -> Union[Item, FeatureLayer, Fea
             else:
                 return FeatureLayerCollection(url, gis=gis)
         except Exception as e:
-            raise ValueError(f"Could not connect to service URL '{url}': {e}")
+            # Fallback: Try without GIS object (helps with some public services or authInfo errors)
+            try:
+                if url.rstrip('/').split('/')[-1].isdigit():
+                    return FeatureLayer(url)
+                else:
+                    return FeatureLayerCollection(url)
+            except Exception:
+                 raise ValueError(f"Could not connect to service URL '{url}': {e}")
             
     raise ValueError(f"Unknown input type: {item_id_or_url}")
 
@@ -137,6 +144,156 @@ def get_row_counts(item: Union[Item, FeatureLayer, FeatureLayerCollection], wher
         "layer_counts": layer_counts,
         "table_counts": table_counts,
         "total_count": total
+    }
+
+def count_rows(input_str: str, 
+              layer_index: Optional[int] = None, 
+              where: str = "1=1") -> Dict[str, Any]:
+    """
+    Counts rows for the target Feature Layer(s) or Table(s).
+    Returns a strict schema dictionary.
+    """
+    # 1. Resolve Auth (Best effort)
+    try:
+        from src.services.arcgis_client import get_gis
+        gis = get_gis()
+    except ImportError:
+        gis = GIS()
+        
+    resolved_info = {
+        "kind": "unknown",
+        "item_id": None, 
+        "service_url": None
+    }
+    
+    # 2. Parse Input & Target
+    try:
+        target = normalize_layer_input(input_str)
+        resolved_info['kind'] = target.get('kind', 'unknown')
+        if target.get('kind') == 'item_id':
+             resolved_info['item_id'] = target.get('item_id')
+        elif target.get('kind') == 'service_url':
+             resolved_info['service_url'] = target.get('url')
+             # If layer index was implicit in URL (e.g. /0), override default unless explicit
+             if target.get('layer_index') is not None and layer_index is None:
+                 layer_index = target.get('layer_index')
+
+        obj = resolve_item(input_str, gis)
+        
+    except Exception as e:
+        return {
+            "ok": False,
+            "error": str(e),
+            "input": input_str,
+            "resolved": resolved_info,
+            "layers": [],
+            "tables": [],
+            "total_count": 0
+        }
+        
+    # 3. Identify Layers to Count
+    layers_to_count = []
+    tables_to_count = []
+    
+    # helper to fetch name safely
+    def get_name(o, default):
+        try: return o.properties.name
+        except: return default
+        
+    if isinstance(obj, FeatureLayer):
+        # Single layer target
+        layers_to_count.append((0, obj, get_name(obj, "Target Layer")))
+        
+    elif isinstance(obj, FeatureLayerCollection):
+        # Collection: filter by index if provided, else all
+        if layer_index is not None:
+            # Specific layer?
+            # Note: FeatureLayerCollection.layers is a list.
+            if 0 <= layer_index < len(obj.layers):
+                 l = obj.layers[layer_index]
+                 layers_to_count.append((layer_index, l, get_name(l, f"Layer {layer_index}")))
+            else:
+                 # Check tables?
+                 # If index is high, it might be a table, but usually tables are separate.
+                 # User spec says: "If layer_index is provided, count ONLY that layer"
+                 # We will return error if out of bounds? Or just 0?
+                 # Let's try tables if layers fail? No, strict index usually implies layers array.
+                 pass
+        else:
+             # All layers and tables
+             for i, l in enumerate(obj.layers):
+                 layers_to_count.append((i, l, get_name(l, f"Layer {i}")))
+             for i, t in enumerate(obj.tables):
+                 tables_to_count.append((i, t, get_name(t, f"Table {i}")))
+                 
+    elif isinstance(obj, Item):
+         # Item wrapper, similar to Collection usually
+         if hasattr(obj, 'layers'):
+             if layer_index is not None:
+                  if 0 <= layer_index < len(obj.layers):
+                       l = obj.layers[layer_index]
+                       layers_to_count.append((layer_index, l, get_name(l, f"Layer {layer_index}")))
+             else:
+                  for i, l in enumerate(obj.layers):
+                       layers_to_count.append((i, l, get_name(l, f"Layer {i}")))
+         if hasattr(obj, 'tables') and layer_index is None:
+              for i, t in enumerate(obj.tables):
+                   tables_to_count.append((i, t, get_name(t, f"Table {i}")))
+
+    # 4. Perform Counts
+    layer_results = []
+    table_results = []
+    total_count = 0
+    has_error = False
+    
+    def do_count(idx, lyr_obj, name):
+        nonlocal total_count, has_error
+        try:
+            # return_count_only=True
+            c = lyr_obj.query(where=where, return_count_only=True)
+            # ArcGIS API for Python query() with return_count_only=True returns just the number usually
+            if isinstance(c, (int, float)):
+                return {"index": idx, "name": name, "count": int(c), "error": None}
+            else:
+                # rare case it returns dict?
+                return {"index": idx, "name": name, "count": None, "error": f"Unexpected return type: {type(c)}"}
+        except Exception as e:
+            has_error = True
+            return {"index": idx, "name": name, "count": None, "error": str(e)}
+
+    for idx, lyr, name in layers_to_count:
+        r = do_count(idx, lyr, name)
+        if r['count'] is not None: total_count += r['count']
+        layer_results.append(r)
+        
+    for idx, tbl, name in tables_to_count:
+        r = do_count(idx, tbl, name)
+        if r['count'] is not None: total_count += r['count']
+        table_results.append(r)
+        
+    # If no layers found at all (and we didn't error earlier)
+    if not layer_results and not table_results:
+         # Maybe layer index was out of bounds?
+         msg = "No layers found."
+         if layer_index is not None: msg += f" (Index {layer_index} might be invalid)"
+         return {
+            "ok": False,
+            "error": msg,
+            "input": input_str,
+            "resolved": resolved_info,
+            "layers": [],
+            "tables": [],
+            "total_count": 0
+        }
+
+    return {
+        "ok": True,
+        "error": None, # Top level error is None if we processed the request, even if individual layers failed
+        "input": input_str,
+        "resolved": resolved_info,
+        "layers": layer_results,
+        "tables": table_results,
+        "total_count": total_count
     }
 
 def _calculate_extent_from_features(features: List[Dict]) -> Optional[List[float]]:

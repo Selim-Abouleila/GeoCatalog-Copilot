@@ -20,7 +20,7 @@ from scripts.generate_catalog_report import generate_catalog_report
 from src.services.arcgis_client import get_gis
 
 # Feature Layer Tools integration
-from src.tools.feature_layer_tools import resolve_item, get_row_counts, query_preview_geojson
+from src.tools.feature_layer_tools import resolve_item, count_rows, query_preview_geojson, get_row_counts # Keeping get_row_counts import if needed elsewhere, but we will replace usages
 from src.tools.renderer_tools import fetch_layer_renderer
 from src.ui.map_state import init_map_state, enter_layer_view, exit_layer_view, add_preview_layer, remove_preview_layer, set_pending_zoom, clear_preview_layers
 from src.ui.map_renderer import app_render_map
@@ -29,6 +29,11 @@ from src.ui.results_cards import render_result_card
 
 # Load environment variables
 load_dotenv()
+
+# --- Caching ---
+@st.cache_data(ttl=600)
+def cached_count_rows(item_id):
+    return count_rows(item_id)
 
 # --- Page Config ---
 st.set_page_config(
@@ -59,6 +64,7 @@ if "preview_layers_version" not in st.session_state:
 init_map_state(st.session_state)
 
 # --- Helper Logic ---
+
 def get_item_id_from_text(text):
     # 1. Check for Map Viewer URL
     if "apps/mapviewer" in text and "url=" in text:
@@ -98,6 +104,26 @@ def handle_visualize(item_id, layer_idx, limit):
         st.toast(f"✅ Loaded: {res['layer_name']}")
     else:
         st.error(f"Visualization Failed: {res.get('error')}")
+
+def handle_count_rows(item_id):
+    # Store result in session state to display in assistant or toast
+    key = f"count_res_{item_id}"
+    with st.spinner("Counting rows..."):
+        res = cached_count_rows(item_id)
+        
+    if res['ok']:
+        msg = f"**Total Records**: {res['total_count']}\n\n"
+        if res['layers']:
+            msg += "| Layer | Count |\n|---|---|\n"
+            for l in res['layers']:
+                msg += f"| {l['name']} | {l['count']} |\n"
+        st.session_state.messages.append({
+            "role": "assistant", 
+            "content": f"📊 **Count Results for {item_id}**\n\n{msg}"
+        })
+        st.toast(f"Count Complete: {res['total_count']} records")
+    else:
+        st.error(f"Count Failed: {res.get('error')}")
 
 # --- Sidebar Navigation & Status ---
 with st.sidebar:
@@ -192,9 +218,6 @@ if page == "Copilot":
             if not st.session_state.messages and st.session_state.first_load:
                 st.session_state.first_load = False
             
-            if not st.session_state.messages and st.session_state.first_load:
-                 st.session_state.first_load = False
-            
             # Removed startup hint
             
             for msg in st.session_state.messages:
@@ -206,7 +229,7 @@ if page == "Copilot":
         # Simple Intent Logic
         p_low = prompt.lower()
         is_viz = any(x in p_low for x in ["visualize", "preview", "map this"])
-        is_cnt = any(x in p_low for x in ["count rows", "how many rows"])
+        is_cnt = any(x in p_low for x in ["count rows", "how many rows", "record count", "how many records"])
         tid = get_item_id_from_text(prompt) or st.session_state.selected_item_id
         
         with col_chat:
@@ -214,22 +237,30 @@ if page == "Copilot":
                 if is_viz or is_cnt:
                     if not tid:
                         box.write("⚠️ Select an item first.")
-                        response_text = "Please select an item from the results."
+                        response_text = "Please select an item from the results or paste a standard URL/ID."
                         box.update(state="error")
                     else:
                         try:
-                            gis = get_gis()
-                            item = resolve_item(tid, gis)
+                            # We don't need 'gis' or 'resolve_item' here directly anymore, tools handle it
+                            # But visualized needs resolve? query_preview_geojson handles it.
+                            
                             if is_cnt:
                                 box.write("🔢 Counting...")
-                                c = get_row_counts(item)
-                                if c['total_count'] >= 0:
-                                    response_text = f"**{item.title}**: {c['total_count']} rows across {c['total_layers']} layers."
-                                else: response_text = "Error counting."
+                                c = cached_count_rows(tid)
+                                if c['ok']:
+                                    response_text = f"**Total Records**: {c['total_count']}"
+                                    if c['layers']:
+                                        response_text += "\n\n| Layer | Count |\n|---|---|\n"
+                                        for l in c['layers']:
+                                            response_text += f"| {l['name']} | {l['count'] if l['count'] is not None else 'Error'} |\n"
+                                else: 
+                                    response_text = f"Error counting: {c.get('error')}"
+                                    
                             if is_viz:
                                 box.write("🗺️ Loading preview...")
                                 handle_visualize(tid, layer_idx_sel, st.session_state.preview_limit_applied)
-                                response_text = f"Added **{item.title}** to map."
+                                response_text = f"Added item to map."
+                                
                             box.update(state="complete")
                         except Exception as e:
                             response_text = f"Error: {e}"
@@ -262,8 +293,8 @@ if page == "Copilot":
                     handle_visualize(tid, layer_idx_sel, st.session_state.preview_limit_applied)
                     st.rerun()
                     
-                def on_sel(tid):
-                    st.session_state.selected_item_id = tid
+                def on_cnt(tid):
+                    handle_count_rows(tid)
                     st.rerun()
 
                 for item in st.session_state.results:
@@ -272,7 +303,7 @@ if page == "Copilot":
                         st.session_state.selected_item_id,
                         st.session_state.preview_limit_applied,
                         on_viz,
-                        on_sel
+                        on_cnt
                     )
             else:
                  st.write("No results.")
@@ -290,7 +321,7 @@ if page == "Copilot":
         st.write("Preview Layers:", len(st.session_state.preview_layers))
 
 # --- Other Pages Unchanged ---
-elif page == "Catalog Health":
+if page == "Catalog Health":
     st.title("📊 Catalog Health")
     if not status['ok']: st.stop()
     run_id = status['latest_run']['run_id']

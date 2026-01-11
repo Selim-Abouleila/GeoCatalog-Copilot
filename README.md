@@ -102,3 +102,14 @@ In the Copilot chat, type:
 ```bash
 python scripts/verify_visualize_geojson.py --item-id <id>
 ```
+
+## Count Rows (Feature Layer)
+You can count the number of records (rows) in a Feature Service or Feature Layer without downloading the data.
+- **From UI**: Click the `🔢 Count` button on any Feature Layer/Service result card.
+- **From Chat**: Ask "count rows for <Item ID>" or "how many records in <URL>".
+- **Note**: This tool uses `return_count_only=True` for efficiency. If a service has multiple layers or tables, it will attempt to count all of them and provide a detailed breakdown.
+
+### Verification
+```bash
+python scripts/verify_count_rows.py --input <url_or_id>
+```
