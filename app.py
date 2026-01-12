@@ -46,6 +46,8 @@ st.set_page_config(
 # Apply Custom CSS
 apply_custom_css()
 
+
+
 # --- Session State Initialization ---
 if "messages" not in st.session_state:
     st.session_state.messages = []
@@ -59,6 +61,11 @@ if "preview_limit_applied" not in st.session_state:
     st.session_state.preview_limit_applied = 300
 if "preview_layers_version" not in st.session_state:
     st.session_state.preview_layers_version = 0
+if "chat_enabled" not in st.session_state:
+    st.session_state.chat_enabled = False
+# Auto-enable if history exists
+if st.session_state.messages:
+    st.session_state.chat_enabled = True
 
 # Initialize Map State (using helper)
 init_map_state(st.session_state)
@@ -223,7 +230,19 @@ if page == "Copilot":
             for msg in st.session_state.messages:
                 with st.chat_message(msg["role"]): st.markdown(msg["content"])
 
-    if prompt := st.chat_input("Ask..."):
+    
+    # Chat Input Gate
+    prompt = None
+    if st.session_state.chat_enabled:
+        prompt = st.chat_input("Ask...")
+    else:
+        # Show Start Button to prevent autofocus scroll
+        with col_chat:
+            if st.button("💬 Start Chatting", type="primary", use_container_width=True):
+                st.session_state.chat_enabled = True
+                st.rerun()
+
+    if prompt:
         st.session_state.messages.append({"role": "user", "content": prompt})
         
         # Simple Intent Logic
