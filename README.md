@@ -113,3 +113,20 @@ You can count the number of records (rows) in a Feature Service or Feature Layer
 ```bash
 python scripts/verify_count_rows.py --input <url_or_id>
 ```
+
+## Remediation Pack (Step 4A)
+Generate CSV packs to fix metadata issues offline.
+
+```bash
+python scripts/generate_remediation_pack.py
+```
+This produces CSVs in `reports/` with prioritized actions:
+- `remediation_YYYY-MM-DD_missing_tags.csv`
+- `remediation_YYYY-MM-DD_missing_description.csv`
+- `remediation_YYYY-MM-DD_stale_items.csv`
+- `remediation_YYYY-MM-DD_broken_services.csv`
+
+### Verification
+```bash
+python scripts/verify_step4_remediation_pack.py
+```

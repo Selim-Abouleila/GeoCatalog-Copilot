@@ -1,0 +1,5 @@
+item_id,title,item_type,owner,priority,recommended_action,url,quality_score,modified_at
+74ae3d2e702f4323b972fb2e234e3cf1,.17_Using_LIDAR_to_Locate_Prime_Willow_Planting_Locations ,StoryMap,estaggs_pdxedu,85,REVIEW_STALE,https://storymaps.arcgis.com/stories/74ae3d2e702f4323b972fb2e234e3cf1,25,2021-03-17 05:36:56
+1b93370d6621425cbc5b25e032d25d92,"GIS information Center, Water Resources Agency, Taiwan",Web Mapping Application,edchangtw,60,REVIEW_STALE,http://gic.wra.gov.tw/gic/GIS/FX/Main.aspx,,2012-06-21 07:52:26
+99580085ecfc46979286eff42df0b0d3,Verkeersborden,Map Template,docent_opleidingen,60,REVIEW_STALE,,,2015-10-22 15:18:02
+628578697fb24d8ea4c32fa0c5ae1843,COVID-19 Cases US,Feature Service,CSSE_covid19,40,REVIEW_STALE,https://services1.arcgis.com/0MSEUqKaxRlEPj5g/arcgis/rest/services/ncov_cases_US/FeatureServer,70,2023-03-10 15:05:05
