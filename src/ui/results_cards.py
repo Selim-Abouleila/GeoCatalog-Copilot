@@ -17,7 +17,7 @@ from src.ui.map_state import add_preview_layer
 # Wait, `handle_visualize` is complex (toast, spinner). 
 # Let's define `render_result_card` to take a `on_visualize` callback.
 
-def render_result_card(item, current_selected_id, preview_limit, on_visualize_click, on_count_click=None):
+def render_result_card(item, current_selected_id, preview_limit, on_visualize_click, on_count_click=None, is_saved=False, on_toggle_save=None):
     """
     Renders a single result card with correct link behavior.
     
@@ -27,6 +27,8 @@ def render_result_card(item, current_selected_id, preview_limit, on_visualize_cl
         preview_limit (int): Limit for preview.
         on_visualize_click (callable): Function(item_id) -> None.
         on_count_click (callable, optional): Function(item_id) -> None.
+        is_saved (bool): Whether the item is already in watchlist.
+        on_toggle_save (callable, optional): Function(item) -> None.
     """
     score = item.get('quality_score', 0)
     bclass = "score-badge-high" if score > 70 else "score-badge-med"
@@ -45,8 +47,8 @@ def render_result_card(item, current_selected_id, preview_limit, on_visualize_cl
         c2.progress(score/100)
         
         # 4. Buttons Row
-        # [Open] [Visualize] [Count]
-        b1, b2, b3 = st.columns([0.8, 1.2, 1])
+        # [Open] [Visualize] [Count] [Save/Saved]
+        b1, b2, b3, b4 = st.columns([0.7, 1.1, 0.9, 0.9])
         
         with b1:
              # Explicit Open
@@ -63,6 +65,16 @@ def render_result_card(item, current_selected_id, preview_limit, on_visualize_cl
              if item['type'] in ['Feature Service', 'Feature Layer']:
                  if st.button("🔢 Count", key=f"cnt_{item['id']}", help="Count records in this service"):
                      if on_count_click: on_count_click(item['id'])
+        
+        with b4:
+            # Save / Remove
+            if on_toggle_save:
+                label = "Saved ✅" if is_saved else "Save 🔖"
+                help_text = "Remove from watchlist" if is_saved else "Add to watchlist"
+                # Use type='primary' if saved to make it distinct? Or default.
+                # Let's keep default but change label.
+                if st.button(label, key=f"save_{item['id']}", help=help_text):
+                     on_toggle_save(item)
                      
         with st.expander("Details"):
              st.write(clean_html_to_text(item.get('snippet')))

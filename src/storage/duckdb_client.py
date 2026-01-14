@@ -87,3 +87,85 @@ def list_tables(con: duckdb.DuckDBPyConnection) -> List[str]:
     tables = [row[0] for row in result]
     tables.sort()
     return tables
+
+def upsert_watchlist_item(item: dict) -> None:
+    """
+    Upserts a watchlist item.
+    
+    Args:
+        item (dict): Dictionary containing item details. 
+                     Must include: item_id, url, title, item_type, owner.
+                     Optional: source_query, notes.
+    """
+    con = connect(read_only=False)
+    try:
+        con.execute("""
+            INSERT INTO watchlist_items (
+                item_id, item_url, title, item_type, owner, source_query, added_at, notes
+            ) VALUES (
+                ?, ?, ?, ?, ?, ?, current_timestamp, ?
+            ) ON CONFLICT (item_id) DO UPDATE SET
+                item_url = excluded.item_url,
+                title = excluded.title,
+                item_type = excluded.item_type,
+                owner = excluded.owner,
+                added_at = current_timestamp,
+                notes = COALESCE(excluded.notes, watchlist_items.notes)
+        """, (
+            item['id'], 
+            item.get('url'), 
+            item.get('title'), 
+            item.get('type'), 
+            item.get('owner'),
+            item.get('source_query'),
+            item.get('notes')
+        ))
+    finally:
+        con.close()
+
+def remove_watchlist_item(item_id: str) -> None:
+    """
+    Removes a watchlist item by ID.
+    
+    Args:
+        item_id (str): The ID of the item to remove.
+    """
+    con = connect(read_only=False)
+    try:
+        con.execute("DELETE FROM watchlist_items WHERE item_id = ?", (item_id,))
+    finally:
+        con.close()
+
+def list_watchlist_items() -> List[dict]:
+    """
+    Lists all watchlist items detailed.
+    
+    Returns:
+        List[dict]: List of items sorted by added_at DESC.
+    """
+    con = connect(read_only=True)
+    try:
+        # Check if table exists first to avoid errors on fresh start before init
+        tables = con.sql("SHOW TABLES").fetchall()
+        table_names = [t[0] for t in tables]
+        if 'watchlist_items' not in table_names:
+            return []
+            
+        columns = ['item_id', 'item_url', 'title', 'item_type', 'owner', 'source_query', 'added_at', 'notes']
+        res = con.execute("SELECT item_id, item_url, title, item_type, owner, source_query, added_at, notes FROM watchlist_items ORDER BY added_at DESC").fetchall()
+        
+        items = []
+        for row in res:
+            items.append({
+                'id': row[0],
+                'url': row[1],
+                'title': row[2],
+                'type': row[3],
+                'owner': row[4],
+                'source_query': row[5],
+                'added_at': row[6],
+                'notes': row[7]
+            })
+        return items
+    finally:
+        con.close()

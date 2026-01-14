@@ -18,6 +18,7 @@ from src.services.catalog_store import get_status, admin_queries
 from src.services.report_store import list_reports, read_text, list_report_csvs
 from scripts.generate_catalog_report import generate_catalog_report
 from src.services.arcgis_client import get_gis
+from src.storage.duckdb_client import ensure_db_initialized, list_watchlist_items, upsert_watchlist_item, remove_watchlist_item # NEW
 
 # Feature Layer Tools integration
 from src.tools.feature_layer_tools import resolve_item, count_rows, query_preview_geojson, get_row_counts # Keeping get_row_counts import if needed elsewhere, but we will replace usages
@@ -46,7 +47,8 @@ st.set_page_config(
 # Apply Custom CSS
 apply_custom_css()
 
-
+# Ensure DB initialized (idempotent, fast)
+ensure_db_initialized()
 
 # --- Session State Initialization ---
 if "messages" not in st.session_state:
@@ -140,6 +142,29 @@ with st.sidebar:
 
     if page == "Copilot":
         
+        # --- Watchlist Section ---
+        st.markdown("**Watchlist**")
+        watchlist = list_watchlist_items()
+        wl_count = len(watchlist)
+        with st.expander(f"Saved Items ({wl_count})", expanded=False):
+            if watchlist:
+                for w in watchlist:
+                    st.caption(f"[{w['title']}]({w['url']})")
+                
+                # Export to CSV
+                df_wl = pd.DataFrame(watchlist)
+                csv = df_wl.to_csv(index=False).encode('utf-8')
+                st.download_button(
+                    "📥 Export Watchlist CSV",
+                    data=csv,
+                    file_name="watchlist.csv",
+                    mime="text/csv",
+                    key="wl_csv"
+                )
+            else:
+                st.caption("No items saved.")
+        st.divider()
+
         # --- Map Controls (Context Sensitive) ---
         if st.session_state.map_mode == "layer_view":
             st.markdown("#### 🗺️ Layer View")
@@ -306,6 +331,10 @@ if page == "Copilot":
         with st.container(height=600):
             if st.session_state.results:
                 
+                # Fetch Saved IDsSet for quick lookup
+                # (re-fetch each render is fine for small watchlist, or cache it)
+                saved_ids = {w['id'] for w in list_watchlist_items()}
+                
                 # Define callbacks
                 def on_viz(tid):
                     # Visualize does NOT set selected_item_id anymore
@@ -315,14 +344,27 @@ if page == "Copilot":
                 def on_cnt(tid):
                     handle_count_rows(tid)
                     st.rerun()
+                    
+                def on_save(item):
+                     # Toggle logic
+                     if item['id'] in saved_ids:
+                         remove_watchlist_item(item['id'])
+                         st.toast(f"Removed '{item['title']}' from watchlist")
+                     else:
+                         upsert_watchlist_item(item)
+                         st.toast(f"Saved '{item['title']}' to watchlist")
+                     st.rerun()
 
                 for item in st.session_state.results:
+                    is_saved = item['id'] in saved_ids
                     render_result_card(
                         item, 
                         st.session_state.selected_item_id,
                         st.session_state.preview_limit_applied,
                         on_viz,
-                        on_cnt
+                        on_cnt,
+                        is_saved=is_saved,
+                        on_toggle_save=on_save
                     )
             else:
                  st.write("No results.")

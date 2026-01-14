@@ -87,3 +87,14 @@ CREATE TABLE IF NOT EXISTS relationships (
     dst_item_id VARCHAR,
     relationship_type VARCHAR
 );
+
+CREATE TABLE IF NOT EXISTS watchlist_items (
+  item_id TEXT PRIMARY KEY,
+  item_url TEXT,
+  title TEXT,
+  item_type TEXT,
+  owner TEXT,
+  source_query TEXT,
+  added_at TIMESTAMP,
+  notes TEXT
+);
